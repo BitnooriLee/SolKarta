@@ -13,9 +13,14 @@ import {
 import { analyzeAllFloors } from "@/lib/floor-analysis";
 import { gradeToColor, gradeToSwedishLabel } from "@/lib/scoring";
 
+const DEFAULT_TOTAL_FLOORS = 4;
+const MAX_UI_FLOORS = 20;
+
 interface AnalysisCardProps {
   lat?: number;
   lng?: number;
+  /** Parsed from Mapbox 3D buildings at the pin; null = use default total */
+  buildingStoreysHint?: number | null;
   /** True while a map-click reverse-geocoding request is in flight. */
   loading?: boolean;
 }
@@ -33,17 +38,29 @@ function formatWinterHours(hours: number): string {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export default function AnalysisCard({ lat = 59.333, lng = 18.067, loading }: AnalysisCardProps) {
-  const [floor, setFloor] = useState(3);
-  const [totalFloors, setTotalFloors] = useState(6);
+export default function AnalysisCard({
+  lat = 59.333,
+  lng = 18.067,
+  buildingStoreysHint = null,
+  loading,
+}: AnalysisCardProps) {
+  const [floor, setFloor] = useState(1);
+  const [totalFloors, setTotalFloors] = useState(DEFAULT_TOTAL_FLOORS);
 
   const year = useMemo(() => new Date().getFullYear(), []);
 
-  // Reset floor to 1 whenever the analysed location changes so stale state
-  // from a previous building never bleeds into a fresh location.
+  // Keep floor picker aligned with the map anchor: new coords or a new Mapbox
+  // storey hint resets to våning 1 and rescopes the stepper range.
   useEffect(() => {
     setFloor(1);
-  }, [lat, lng]);
+    const nextTotal =
+      buildingStoreysHint != null &&
+      Number.isFinite(buildingStoreysHint) &&
+      buildingStoreysHint >= 1
+        ? Math.min(MAX_UI_FLOORS, Math.max(1, Math.round(buildingStoreysHint)))
+        : DEFAULT_TOTAL_FLOORS;
+    setTotalFloors(nextTotal);
+  }, [lat, lng, buildingStoreysHint]);
 
   // Compute all floors once per location/totalFloors change.
   // 10 floors × 144 SunCalc samples × 2 solstices ≈ 2 ms — no loading state needed.
@@ -67,7 +84,7 @@ export default function AnalysisCard({ lat = 59.333, lng = 18.067, loading }: An
   }));
 
   const handleTotalChange = (delta: number) => {
-    const next = Math.min(20, Math.max(1, totalFloors + delta));
+    const next = Math.min(MAX_UI_FLOORS, Math.max(1, totalFloors + delta));
     setTotalFloors(next);
     if (floor > next) setFloor(next);
   };
@@ -85,6 +102,7 @@ export default function AnalysisCard({ lat = 59.333, lng = 18.067, loading }: An
           </span>
         </div>
         {/* Total floors stepper */}
+        <div className="flex flex-col items-end gap-0.5">
         <div className="flex items-center gap-0.5 border border-black/[0.08] rounded-md px-1.5 py-0.5 bg-surface">
           <span className="text-[8px] text-muted leading-none mr-0.5">Totalt</span>
           <button
@@ -104,6 +122,16 @@ export default function AnalysisCard({ lat = 59.333, lng = 18.067, loading }: An
           >
             <ChevronUp size={10} strokeWidth={2.5} />
           </button>
+        </div>
+        {buildingStoreysHint != null ? (
+          <span className="text-[7px] text-muted/80 leading-none max-w-[5.5rem] text-right">
+            Våningar från karta
+          </span>
+        ) : (
+          <span className="text-[7px] text-muted/80 leading-none max-w-[5.5rem] text-right">
+            Standard — justera vid behov
+          </span>
+        )}
         </div>
       </div>
 

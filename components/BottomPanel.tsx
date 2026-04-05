@@ -9,10 +9,19 @@ interface BottomPanelProps {
   onDateChange: (date: Date) => void;
   lat?: number;
   lng?: number;
+  /** Map-derived storey estimate; null = unknown / no 3D building metadata */
+  buildingStoreysHint?: number | null;
   locating?: boolean;
 }
 
-export default function BottomPanel({ sunDate, onDateChange, lat, lng, locating }: BottomPanelProps) {
+export default function BottomPanel({
+  sunDate,
+  onDateChange,
+  lat,
+  lng,
+  buildingStoreysHint = null,
+  locating,
+}: BottomPanelProps) {
   return (
     <aside className="shrink-0 bg-panel border-t border-black/[0.06] z-10 overflow-hidden">
       {/* Insight row: sun altitude graph (left) + floor analysis card (right) */}
@@ -20,7 +29,12 @@ export default function BottomPanel({ sunDate, onDateChange, lat, lng, locating 
         <div className="flex-1 min-w-0">
           <SunChart sunDate={sunDate} lat={lat} lng={lng} />
         </div>
-        <AnalysisCard lat={lat} lng={lng} loading={locating} />
+        <AnalysisCard
+          lat={lat}
+          lng={lng}
+          buildingStoreysHint={buildingStoreysHint}
+          loading={locating}
+        />
       </div>
 
       {/* Divider */}

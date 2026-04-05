@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
 import TopBar from "@/components/TopBar";
 import BottomPanel from "@/components/BottomPanel";
@@ -33,6 +33,12 @@ export default function HomePage() {
   /** True while reverse-geocoding is in progress after a map click. */
   const [isLocating, setIsLocating] = useState(false);
 
+  /**
+   * Storey count inferred from Mapbox 3D building tiles at the snapped pin.
+   * `null` = no building hit or no height/levels in tile data (use card default).
+   */
+  const [estimatedStoreys, setEstimatedStoreys] = useState<number | null>(null);
+
   // Stable ref to the map's light-update function — avoids prop-drilling re-renders
   const updateMapLightRef = useRef<((date: Date) => void) | null>(null);
 
@@ -54,22 +60,43 @@ export default function HomePage() {
   // mapClickAddress — keeping it in sync with the address bar on first load.
   const handleAddressSelect = useCallback((lng: number, lat: number, placeName?: string) => {
     setSelectedCoords({ lng, lat });
+    setEstimatedStoreys(null);
     if (placeName) setMapClickAddress(placeName);
     setIsLocating(false);
   }, []);
 
+  const handleAnchorFromMap = useCallback(
+    (lng: number, lat: number, storeys: number | null) => {
+      setSelectedCoords({ lng, lat });
+      setEstimatedStoreys(storeys);
+    },
+    []
+  );
+
   // Fires immediately on a valid map click (before geocoding finishes)
-  const handleClickStart = useCallback((lng: number, lat: number) => {
-    setSelectedCoords({ lng, lat });
-    setIsLocating(true);
-  }, []);
+  const handleClickStart = useCallback(
+    (lng: number, lat: number, storeys: number | null) => {
+      handleAnchorFromMap(lng, lat, storeys);
+      setIsLocating(true);
+    },
+    [handleAnchorFromMap]
+  );
 
   // Fires after reverse-geocoding completes
-  const handleMapClick = useCallback((lng: number, lat: number, placeName: string) => {
-    setSelectedCoords({ lng, lat });
-    setMapClickAddress(placeName);
-    setIsLocating(false);
-  }, []);
+  const handleMapClick = useCallback(
+    (lng: number, lat: number, placeName: string, storeys: number | null) => {
+      handleAnchorFromMap(lng, lat, storeys);
+      setMapClickAddress(placeName);
+      setIsLocating(false);
+    },
+    [handleAnchorFromMap]
+  );
+
+  // Re-apply map sun-light when the analysis location changes (slider uses the ref updater).
+  useEffect(() => {
+    if (!selectedCoords) return;
+    updateMapLightRef.current?.(sunDate);
+  }, [selectedCoords, sunDate]);
 
   return (
     <main className="flex flex-col h-dvh overflow-hidden">
@@ -83,6 +110,7 @@ export default function HomePage() {
           coords={selectedCoords}
           onClickStart={handleClickStart}
           onMapClick={handleMapClick}
+          onAnchorUpdate={handleAnchorFromMap}
         />
       </div>
 
@@ -92,6 +120,7 @@ export default function HomePage() {
         onDateChange={handleDateChange}
         lat={selectedCoords?.lat}
         lng={selectedCoords?.lng}
+        buildingStoreysHint={estimatedStoreys}
         locating={isLocating}
       />
     </main>

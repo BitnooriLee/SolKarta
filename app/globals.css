@@ -92,7 +92,11 @@
 .solkarta-marker {
   width: 36px;
   height: 46px;
-  cursor: pointer;
+  cursor: grab;
+}
+
+.solkarta-marker:active {
+  cursor: grabbing;
 }
 
 .solkarta-marker-inner {
