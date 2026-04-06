@@ -1,14 +1,27 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import mapboxgl from "mapbox-gl";
 import { computeSunLight } from "@/lib/sun-logic";
 import { estimateStoreysFromBuildingProps } from "@/lib/building-storeys";
+import { DEFAULT_ANCHOR } from "@/lib/default-anchor";
 
-// Stockholm city center — fallback when no address is selected
-const STOCKHOLM: [number, number] = [18.0686, 59.3293]; // [lng, lat]
+const STOCKHOLM: [number, number] = [DEFAULT_ANCHOR.lng, DEFAULT_ANCHOR.lat];
+
+/** Web Mercator latitude limit; keeps DEM / fill-extrusion shadow sampling inside valid tile space. */
+const MAX_MERCATOR_LAT = 85.05112878;
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
+
+function sanitizeLngLat(lng: number, lat: number): { lng: number; lat: number } {
+  if (!isFinite(lng) || !isFinite(lat)) {
+    return { lng: STOCKHOLM[0], lat: STOCKHOLM[1] };
+  }
+  const wrapped =
+    ((((lng + 180) % 360) + 360) % 360) - 180;
+  const clampedLat = Math.min(MAX_MERCATOR_LAT, Math.max(-MAX_MERCATOR_LAT, lat));
+  return { lng: wrapped, lat: clampedLat };
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,14 +70,18 @@ function applyMapboxLight(
   date: Date,
   location: [number, number] = STOCKHOLM
 ): void {
-  const { azimuthal, polar, intensity, lightPreset } = computeSunLight(
-    location[1],
-    location[0],
-    date
-  );
+  const [lng0, lat0] = location;
+  const { lng, lat } = sanitizeLngLat(lng0, lat0);
+  let { azimuthal, polar, intensity, lightPreset } = computeSunLight(lat, lng, date);
+  if (!isFinite(azimuthal)) azimuthal = 0;
+  if (!isFinite(polar)) polar = 45;
+  if (!isFinite(intensity)) intensity = 0.5;
 
   map.setConfigProperty("basemap", "lightPreset", lightPreset);
 
+  // cast-shadows triggers fill-extrusion shadow pass → DEM sampling; GL JS can throw
+  // RangeError: out of range source coordinates for DEM data (terrain + Standard 3D buildings).
+  // Sun direction / presets still drive the scene; basemap retains its own soft shading.
   (map as unknown as { setLights: (lights: object[]) => void }).setLights([
     {
       id: "ambient-fill",
@@ -82,7 +99,7 @@ function applyMapboxLight(
         color: "hsl(38,60%,98%)",
         intensity,
         direction: [azimuthal, polar],
-        "cast-shadows": true,
+        "cast-shadows": false,
         "shadow-intensity": Math.min(0.95, intensity * 1.1),
       },
     },
@@ -270,13 +287,19 @@ export default function MapView({
   /** Current map center for location-aware sun calculations. */
   const locationRef = useRef<[number, number]>(STOCKHOLM);
 
-  // Stable callback refs — avoids stale-closure problems inside map event handlers
+  // Latest callbacks for map/marker handlers (layout phase → always before map init useEffect).
   const onClickStartRef = useRef(onClickStart);
   const onMapClickRef = useRef(onMapClick);
   const onAnchorUpdateRef = useRef(onAnchorUpdate);
-  useEffect(() => { onClickStartRef.current = onClickStart; }, [onClickStart]);
-  useEffect(() => { onMapClickRef.current = onMapClick; }, [onMapClick]);
-  useEffect(() => { onAnchorUpdateRef.current = onAnchorUpdate; }, [onAnchorUpdate]);
+  useLayoutEffect(() => {
+    onClickStartRef.current = onClickStart;
+  }, [onClickStart]);
+  useLayoutEffect(() => {
+    onMapClickRef.current = onMapClick;
+  }, [onMapClick]);
+  useLayoutEffect(() => {
+    onAnchorUpdateRef.current = onAnchorUpdate;
+  }, [onAnchorUpdate]);
 
   // ── Map initialisation (runs once) ──────────────────────────────────────────
   useEffect(() => {
@@ -318,9 +341,9 @@ export default function MapView({
       flyTo: boolean
     ): Promise<void> => {
       const snapped = snapToBuilding(map, pixel, rawLngLat);
-      const { lng, lat, estimatedStoreys } = snapped;
-
-      if (!isFinite(lng) || !isFinite(lat)) return;
+      const safe = sanitizeLngLat(snapped.lng, snapped.lat);
+      const { lng, lat } = safe;
+      const { estimatedStoreys } = snapped;
 
       locationRef.current = [lng, lat];
       activateMarker(map, marker, markerAddedRef, lng, lat);
@@ -341,7 +364,12 @@ export default function MapView({
       }
 
       onClickStartRef.current?.(lng, lat, estimatedStoreys);
-      const placeName = await reverseGeocode(lng, lat);
+      let placeName = "Okänd plats";
+      try {
+        placeName = await reverseGeocode(lng, lat);
+      } catch {
+        placeName = "Okänd plats";
+      }
       onMapClickRef.current?.(lng, lat, placeName, estimatedStoreys);
     };
 
@@ -387,7 +415,9 @@ export default function MapView({
           maxzoom: 14,
         });
       }
-      map.setTerrain({ source: "mapbox-dem", exaggeration: 1.3 });
+      if (!map.getTerrain()) {
+        map.setTerrain({ source: "mapbox-dem", exaggeration: 1 });
+      }
 
       applyMapboxLight(map, new Date(), locationRef.current);
 
@@ -416,10 +446,8 @@ export default function MapView({
 
     if (!coords || !mapRef.current || !markerRef.current) return;
 
-    const { lng, lat } = coords;
-
-    // Guard: degenerate coords would silently pin the marker at screen (0,0)
-    if (!isFinite(lng) || !isFinite(lat)) return;
+    const { lng: ln0, lat: lt0 } = coords;
+    const { lng, lat } = sanitizeLngLat(ln0, lt0);
 
     const map = mapRef.current;
     const marker = markerRef.current;
@@ -434,6 +462,11 @@ export default function MapView({
         Math.abs(m.lat - lat) < COORD_EPS
       ) {
         locationRef.current = [lng, lat];
+        // Search can clear `estimatedStoreys` while coords match the pin — still
+        // re-query 3D tiles so the analysis card gets a fresh storey hint.
+        const pt = map.project([lng, lat]);
+        const snapped = snapToBuilding(map, pt, { lng, lat });
+        onAnchorUpdateRef.current?.(lng, lat, snapped.estimatedStoreys);
         return;
       }
     }
@@ -447,9 +480,9 @@ export default function MapView({
       const latest = coordsPropRef.current;
       if (!latest) return;
 
-      const ln = latest.lng;
-      const lt = latest.lat;
-      if (!isFinite(ln) || !isFinite(lt)) return;
+      const raw = sanitizeLngLat(latest.lng, latest.lat);
+      const ln = raw.lng;
+      const lt = raw.lat;
 
       const m = mapRef.current;
       const mk = markerRef.current;
@@ -458,8 +491,9 @@ export default function MapView({
       // TopBar address, floor analysis, and pin share one physical anchor.
       const pt = m.project([ln, lt]);
       const snapped = snapToBuilding(m, pt, { lng: ln, lat: lt });
-      const useLng = snapped.lng;
-      const useLat = snapped.lat;
+      const safeSnap = sanitizeLngLat(snapped.lng, snapped.lat);
+      const useLng = safeSnap.lng;
+      const useLat = safeSnap.lat;
       const storeys = snapped.estimatedStoreys;
 
       const snappedMoved =
@@ -469,9 +503,15 @@ export default function MapView({
         onAnchorUpdateRef.current?.(useLng, useLat, storeys);
       } else {
         onClickStartRef.current?.(useLng, useLat, storeys);
-        void reverseGeocode(useLng, useLat).then((placeName) => {
+        void (async () => {
+          let placeName = "Okänd plats";
+          try {
+            placeName = await reverseGeocode(useLng, useLat);
+          } catch {
+            placeName = "Okänd plats";
+          }
           onMapClickRef.current?.(useLng, useLat, placeName, storeys);
-        });
+        })();
       }
 
       locationRef.current = [useLng, useLat];

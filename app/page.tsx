@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import TopBar from "@/components/TopBar";
 import BottomPanel from "@/components/BottomPanel";
-import type { SelectedCoords } from "@/components/MapView";
+import { DEFAULT_ANCHOR } from "@/lib/default-anchor";
 
 // MapView requires `window` (Mapbox GL) — disable SSR
 const MapView = dynamic(() => import("@/components/MapView"), {
@@ -19,9 +19,20 @@ const MapView = dynamic(() => import("@/components/MapView"), {
   ),
 });
 
+type MapAnchor = {
+  lat: number;
+  lng: number;
+  /** Bumps on every user-driven anchor commit so React remounts analysis when lng/lat are unchanged (e.g. snap-to-building). */
+  lastUpdated: number;
+};
+
 export default function HomePage() {
   const [sunDate, setSunDate] = useState<Date>(() => new Date());
-  const [selectedCoords, setSelectedCoords] = useState<SelectedCoords | null>(null);
+  const [anchor, setAnchor] = useState<MapAnchor>(() => ({
+    lat: DEFAULT_ANCHOR.lat,
+    lng: DEFAULT_ANCHOR.lng,
+    lastUpdated: Date.now(),
+  }));
 
   /**
    * Address that came from a map click (reverse-geocoded).
@@ -55,25 +66,43 @@ export default function HomePage() {
     updateMapLightRef.current?.(date);
   }, []);
 
+  const applyAnchorCoords = useCallback((lng: number, lat: number) => {
+    setAnchor({
+      lng,
+      lat,
+      lastUpdated: Date.now(),
+    });
+  }, []);
+
+  /** Stable coords for MapView — only change when lng/lat change, not when `lastUpdated` bumps alone. */
+  const mapViewCoords = useMemo(
+    () => ({ lng: anchor.lng, lat: anchor.lat }),
+    [anchor.lng, anchor.lat]
+  );
+
   // Called by TopBar when the user selects a geocoded result.
   // placeName is captured here so that a TopBar search also updates the
   // mapClickAddress — keeping it in sync with the address bar on first load.
-  const handleAddressSelect = useCallback((lng: number, lat: number, placeName?: string) => {
-    setSelectedCoords({ lng, lat });
-    setEstimatedStoreys(null);
-    if (placeName) setMapClickAddress(placeName);
-    setIsLocating(false);
-  }, []);
-
-  const handleAnchorFromMap = useCallback(
-    (lng: number, lat: number, storeys: number | null) => {
-      setSelectedCoords({ lng, lat });
-      setEstimatedStoreys(storeys);
+  const handleAddressSelect = useCallback(
+    (lng: number, lat: number, placeName?: string) => {
+      setIsLocating(false);
+      applyAnchorCoords(lng, lat);
+      setEstimatedStoreys(null);
+      if (placeName) setMapClickAddress(placeName);
     },
-    []
+    [applyAnchorCoords]
   );
 
-  // Fires immediately on a valid map click (before geocoding finishes)
+  /** Stable: only depends on applyAnchorCoords ([]), so MapView ref slots stop churning every render. */
+  const handleAnchorFromMap = useCallback(
+    (lng: number, lat: number, storeys: number | null) => {
+      applyAnchorCoords(lng, lat);
+      setEstimatedStoreys((prev) => (prev === storeys ? prev : storeys));
+    },
+    [applyAnchorCoords]
+  );
+
+  // Fires immediately on a valid map click / pin commit (before geocoding finishes)
   const handleClickStart = useCallback(
     (lng: number, lat: number, storeys: number | null) => {
       handleAnchorFromMap(lng, lat, storeys);
@@ -85,18 +114,17 @@ export default function HomePage() {
   // Fires after reverse-geocoding completes
   const handleMapClick = useCallback(
     (lng: number, lat: number, placeName: string, storeys: number | null) => {
+      setIsLocating(false);
       handleAnchorFromMap(lng, lat, storeys);
       setMapClickAddress(placeName);
-      setIsLocating(false);
     },
     [handleAnchorFromMap]
   );
 
   // Re-apply map sun-light when the analysis location changes (slider uses the ref updater).
   useEffect(() => {
-    if (!selectedCoords) return;
     updateMapLightRef.current?.(sunDate);
-  }, [selectedCoords, sunDate]);
+  }, [anchor.lng, anchor.lat, sunDate]);
 
   return (
     <main className="flex flex-col h-dvh overflow-hidden">
@@ -107,7 +135,7 @@ export default function HomePage() {
       <div className="flex-1 min-h-0 relative">
         <MapView
           onMapReady={handleMapReady}
-          coords={selectedCoords}
+          coords={mapViewCoords}
           onClickStart={handleClickStart}
           onMapClick={handleMapClick}
           onAnchorUpdate={handleAnchorFromMap}
@@ -116,10 +144,12 @@ export default function HomePage() {
 
       {/* Zone 3: BottomPanel — time slider + season switcher + floor analysis */}
       <BottomPanel
+        key={`bp-${anchor.lat.toFixed(6)}-${anchor.lng.toFixed(6)}-${anchor.lastUpdated}`}
+        analysisCardKey={`${anchor.lat}-${anchor.lng}`}
         sunDate={sunDate}
         onDateChange={handleDateChange}
-        lat={selectedCoords?.lat}
-        lng={selectedCoords?.lng}
+        lat={anchor.lat}
+        lng={anchor.lng}
         buildingStoreysHint={estimatedStoreys}
         locating={isLocating}
       />

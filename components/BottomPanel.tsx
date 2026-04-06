@@ -5,16 +5,18 @@ import SunChart from "@/components/SunChart";
 import AnalysisCard from "@/components/AnalysisCard";
 
 interface BottomPanelProps {
+  analysisCardKey: string;
   sunDate: Date;
   onDateChange: (date: Date) => void;
-  lat?: number;
-  lng?: number;
+  lat: number;
+  lng: number;
   /** Map-derived storey estimate; null = unknown / no 3D building metadata */
   buildingStoreysHint?: number | null;
   locating?: boolean;
 }
 
 export default function BottomPanel({
+  analysisCardKey,
   sunDate,
   onDateChange,
   lat,
@@ -30,6 +32,7 @@ export default function BottomPanel({
           <SunChart sunDate={sunDate} lat={lat} lng={lng} />
         </div>
         <AnalysisCard
+          key={analysisCardKey}
           lat={lat}
           lng={lng}
           buildingStoreysHint={buildingStoreysHint}

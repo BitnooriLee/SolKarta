@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   ComposedChart,
   Area,
@@ -12,10 +12,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { buildDayCurve, getSunTimes } from "@/lib/sun-logic";
-
-// Stockholm default coords — used when no property is selected
-const DEFAULT_LAT = 59.333;
-const DEFAULT_LNG = 18.067;
+import { DEFAULT_ANCHOR } from "@/lib/default-anchor";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -84,13 +81,20 @@ function LegendItem({
 
 interface SunChartProps {
   sunDate: Date;
-  lat?: number;
-  lng?: number;
+  lat: number;
+  lng: number;
 }
 
+const CHART_H_PX = 96;
+
 export default function SunChart({ sunDate, lat, lng }: SunChartProps) {
-  const LAT = lat ?? DEFAULT_LAT;
-  const LNG = lng ?? DEFAULT_LNG;
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  const LAT = Number.isFinite(lat) ? lat : DEFAULT_ANCHOR.lat;
+  const LNG = Number.isFinite(lng) ? lng : DEFAULT_ANCHOR.lng;
 
   const currentMinutes = sunDate.getHours() * 60 + sunDate.getMinutes();
 
@@ -147,7 +151,7 @@ export default function SunChart({ sunDate, lat, lng }: SunChartProps) {
   );
 
   return (
-    <div className="px-5 pt-3 pb-0 flex flex-col gap-2">
+    <div className="px-5 pt-3 pb-0 flex flex-col gap-2 min-w-0 w-full">
 
       {/* ── Summary stats ──────────────────────────────────────────────────── */}
       <div className="flex items-start gap-5 flex-wrap">
@@ -160,113 +164,127 @@ export default function SunChart({ sunDate, lat, lng }: SunChartProps) {
         <StatCard label="Max Höjd" value={`${maxAlt.toFixed(1)}°`} />
       </div>
 
-      {/* ── Chart ─────────────────────────────────────────────────────────── */}
-      <div className="w-full" style={{ height: 96 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart
-            data={chartData}
-            margin={{ top: 6, right: 2, left: -30, bottom: 0 }}
-          >
-            <defs>
-              <linearGradient id="sunFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#E8621A" stopOpacity={0.55} />
-                <stop offset="100%" stopColor="#E8621A" stopOpacity={0.03} />
-              </linearGradient>
-            </defs>
+      <div
+        className="w-full min-w-0 shrink-0 overflow-hidden"
+        style={{
+          width: "100%",
+          height: CHART_H_PX,
+          minHeight: CHART_H_PX,
+        }}
+      >
+        <div
+          className="h-full w-full min-h-0 min-w-0"
+          style={{ width: "100%", height: CHART_H_PX, minHeight: CHART_H_PX }}
+        >
+          {!isMounted ? (
+            <div
+              className="w-full bg-black/[0.02]"
+              style={{ height: CHART_H_PX, minHeight: CHART_H_PX }}
+              aria-hidden
+            />
+          ) : (
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              minWidth={0}
+              minHeight={0}
+              initialDimension={{ width: 640, height: CHART_H_PX }}
+            >
+              <ComposedChart
+                data={chartData}
+                margin={{ top: 6, right: 2, left: -30, bottom: 0 }}
+              >
+                <defs>
+                  <linearGradient id="sunFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#E8621A" stopOpacity={0.55} />
+                    <stop offset="100%" stopColor="#E8621A" stopOpacity={0.03} />
+                  </linearGradient>
+                </defs>
 
-            <XAxis
-              dataKey="minutes"
-              type="number"
-              domain={[0, 1439]}
-              ticks={[0, 360, 720, 1080, 1439]}
-              tickFormatter={xTickFormatter}
-              tick={{ fontSize: 8, fill: "#A0A0A0" }}
-              axisLine={false}
-              tickLine={false}
-            />
-            {/* Y-axis hidden — stats cards carry the numbers */}
-            <YAxis domain={["auto", "auto"]} hide />
+                <XAxis
+                  dataKey="minutes"
+                  type="number"
+                  domain={[0, 1439]}
+                  ticks={[0, 360, 720, 1080, 1439]}
+                  tickFormatter={xTickFormatter}
+                  tick={{ fontSize: 8, fill: "#A0A0A0" }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis domain={["auto", "auto"]} hide />
 
-            {/* Horizon line */}
-            <ReferenceLine
-              y={0}
-              stroke="#00000018"
-              strokeWidth={1}
-            />
+                <ReferenceLine y={0} stroke="#00000018" strokeWidth={1} />
 
-            {/* ── Season reference curves (rendered first → underneath) ── */}
-            <Line
-              dataKey="summer"
-              stroke="#D97706"
-              strokeWidth={1}
-              strokeDasharray="5 4"
-              dot={false}
-              activeDot={false}
-              strokeOpacity={0.4}
-              legendType="none"
-              isAnimationActive={false}
-            />
-            <Line
-              dataKey="winter"
-              stroke="#60A5FA"
-              strokeWidth={1}
-              strokeDasharray="5 4"
-              dot={false}
-              activeDot={false}
-              strokeOpacity={0.4}
-              legendType="none"
-              isAnimationActive={false}
-            />
+                <Line
+                  dataKey="summer"
+                  stroke="#D97706"
+                  strokeWidth={1}
+                  strokeDasharray="5 4"
+                  dot={false}
+                  activeDot={false}
+                  strokeOpacity={0.4}
+                  legendType="none"
+                  isAnimationActive={false}
+                />
+                <Line
+                  dataKey="winter"
+                  stroke="#60A5FA"
+                  strokeWidth={1}
+                  strokeDasharray="5 4"
+                  dot={false}
+                  activeDot={false}
+                  strokeOpacity={0.4}
+                  legendType="none"
+                  isAnimationActive={false}
+                />
 
-            {/* ── Today's Area fill (above-horizon only, no stroke) ──────── */}
-            <Area
-              dataKey="todayPos"
-              fill="url(#sunFill)"
-              stroke="none"
-              dot={false}
-              activeDot={false}
-              legendType="none"
-              isAnimationActive={false}
-            />
+                <Area
+                  dataKey="todayPos"
+                  fill="url(#sunFill)"
+                  stroke="none"
+                  dot={false}
+                  activeDot={false}
+                  legendType="none"
+                  isAnimationActive={false}
+                />
 
-            {/* ── Today's true curve line (full range, incl. below 0) ────── */}
-            <Line
-              dataKey="todayRaw"
-              stroke="#E8621A"
-              strokeWidth={2}
-              dot={false}
-              activeDot={false}
-              legendType="none"
-              isAnimationActive={false}
-            />
+                <Line
+                  dataKey="todayRaw"
+                  stroke="#E8621A"
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={false}
+                  legendType="none"
+                  isAnimationActive={false}
+                />
 
-            {/* ── Current time vertical indicator ───────────────────────── */}
-            <ReferenceLine
-              x={currentMinutes}
-              stroke="#E8621A"
-              strokeWidth={1.5}
-              strokeDasharray="3 3"
-            />
+                <ReferenceLine
+                  x={currentMinutes}
+                  stroke="#E8621A"
+                  strokeWidth={1.5}
+                  strokeDasharray="3 3"
+                />
 
-            {/* ── Sunrise / Sunset dots ──────────────────────────────────── */}
-            <ReferenceDot
-              x={sunriseMin}
-              y={0}
-              r={3}
-              fill="#E8621A"
-              stroke="white"
-              strokeWidth={1.5}
-            />
-            <ReferenceDot
-              x={sunsetMin}
-              y={0}
-              r={3}
-              fill="#E8621A"
-              stroke="white"
-              strokeWidth={1.5}
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
+                <ReferenceDot
+                  x={sunriseMin}
+                  y={0}
+                  r={3}
+                  fill="#E8621A"
+                  stroke="white"
+                  strokeWidth={1.5}
+                />
+                <ReferenceDot
+                  x={sunsetMin}
+                  y={0}
+                  r={3}
+                  fill="#E8621A"
+                  stroke="white"
+                  strokeWidth={1.5}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+        </div>
       </div>
 
       {/* ── Legend ────────────────────────────────────────────────────────── */}
